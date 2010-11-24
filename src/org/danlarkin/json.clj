@@ -24,9 +24,10 @@
 ;; THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 (ns org.danlarkin.json
-  (:import (java.io StringWriter StringReader BufferedReader))
-  (:use (org.danlarkin.json [encoder :as encoder]
-                            [decoder :as decoder])))
+  (:import (System.IO StringWriter MemoryStream BufferedStream))
+  (:use (org.danlarkin.json
+         [encoder :as encoder]
+         [decoder :as decoder])))
 
 (defmacro add-encoder
   "Macro to add custom encoding behavior to the encoder.
@@ -85,14 +86,15 @@
   ;; interface supporting mark/reset regardless which subclass of
   ;; Reader we were passed).  For now, we'll use the default buffer
   ;; length.
-  (if (isa? reader BufferedReader)
+  (if (isa? reader BufferedStream)
     (decoder/decode-from-buffered-reader reader)
-    (decoder/decode-from-buffered-reader (BufferedReader. reader))))
+    (decoder/decode-from-buffered-reader (BufferedStream. reader))))
 
 (defn decode-from-str
   "Takes a JSON-encoded string and returns a clojure datastructure."
   [value]
-  (decode-from-reader (StringReader. value)))
+  ;; TODO: using byte-array precludes support for unicode - fix
+  (decode-from-reader (MemoryStream. (byte-array value))))
 
 (def decode decode-from-str)
 (alter-meta! #'decode (constantly (meta #'decode-from-str)))

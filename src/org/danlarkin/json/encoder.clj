@@ -24,7 +24,14 @@
 ;; THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 (ns org.danlarkin.json.encoder
-  (:import (java.io Writer StringWriter)))
+  (:import (System.IO StringWriter)))
+
+(defprotocol AppendProtocol
+  (append [this str] "Append str to this and then returns this"))
+
+(extend-type StringWriter
+  AppendProtocol
+  (append [this str] (do (.Write this str) this)))
 
 (def #^{:doc "When true, encodes sets as maps of the keys to themselves,
   which is how they are implemented internally. This preserves O(1) lookup
@@ -47,7 +54,7 @@
 (defn- get-next-indent
   "Returns a string of size (+ (count current-indent) indent-size)
    iff indent-size is not zero."
-  [#^String current-indent #^Integer indent-size]
+  [#^String current-indent #^Int32 indent-size]
   (if (zero? indent-size)
     ""
     (str current-indent
@@ -69,34 +76,34 @@
   "Encodes a symbol into JSON.
    If that symbol happens to be separator-symbol, though,
    it will be encoded without surrounding quotation marks."
-  [#^clojure.lang.Symbol value #^Writer writer #^String pad]
+  [#^clojure.lang.Symbol value #^StringWriter writer #^String pad]
   (if (= value separator-symbol)
-    (.append writer (str separator-symbol pad))
-    (.append writer (str \" value \"))))
+    (append writer (str separator-symbol pad))
+    (append writer (str \" value \"))))
 
 (defn- encode-map-entry
   "Encodes a single key:value pair into JSON."
-  [#^clojure.lang.MapEntry pair #^Writer writer
-   #^String pad #^String current-indent #^Integer indent-size]
+  [#^clojure.lang.MapEntry pair #^StringWriter writer
+   #^String pad #^String current-indent #^Int32 indent-size]
   (let [next-indent (get-next-indent current-indent indent-size)
         k (key pair)
         ke (if (number? k) (str k) k)]
     (encode-helper ke writer pad current-indent indent-size)
-    (.append writer ":")
+    (append writer ":")
     (encode-helper (val pair) writer pad "" indent-size next-indent)))
 
 (defn- encode-coll
   "Encodes a collection into JSON."
-  [#^clojure.lang.IPersistentCollection coll #^Writer writer
+  [#^clojure.lang.IPersistentCollection coll #^StringWriter writer
    #^String pad #^String current-indent #^String start-token-indent
-   #^Integer indent-size]
+   #^Int32 indent-size]
   (let [end-token-indent (apply str (drop indent-size current-indent))
         next-indent (get-next-indent current-indent indent-size)]
-    (.append writer (str start-token-indent (start-token coll) pad))
+    (append writer (str start-token-indent (start-token coll) pad))
     (dorun (map (fn [x]
                   (encode-helper x writer pad current-indent indent-size))
                 (interpose separator-symbol coll)))
-    (.append writer (str pad end-token-indent (end-token coll)))))
+    (append writer (str pad end-token-indent (end-token coll)))))
 
 (def escape-map
      #^{:private true}
@@ -116,13 +123,13 @@
    sequence available, it is used.  Otherwise the character is escaped as
    backslash-u-4-hex-digits.  The / (solidus) character can be escaped with
    a backslash but that is not required and this code does not."
-  [#^Character c]
+  [#^Char c]
   (let [quick-escape (escape-map c)]
     (cond
      quick-escape quick-escape
      (or (= c (char 0x20)) (= c (char 0x21))) c
-     (and (>= (.compareTo c (char 0x23)) 0) (<= (.compareTo c (char 0x5B)) 0)) c
-     (>= (.compareTo c (char 0x5D)) 0) c
+     (and (>= (.CompareTo c (char 0x23)) 0) (<= (.CompareTo c (char 0x5B)) 0)) c
+     (>= (.CompareTo c (char 0x5D)) 0) c
      :else (format "\\u%04X" (int c)))))
 
 (defn- escaped-str
@@ -142,26 +149,26 @@
   (throw (Exception. (str "Unknown Datastructure: " value))))
 
 (defn encode-helper
-  [value #^Writer writer #^IPersistentMap
-   #^String pad #^String current-indent #^Integer indent-size & opts]
+  [value #^StringWriter writer #^IPersistentMap
+   #^String pad #^String current-indent #^Int32 indent-size & opts]
   (let [next-indent (if-let [x (first opts)]
                       x
                       (get-next-indent current-indent indent-size))]
     (cond
-     (= (class value) java.lang.Boolean)
-     (.append writer (str current-indent value))
+     (= (class value) Boolean)
+     (append writer (str current-indent value))
 
      (nil? value)
-     (.append writer (str current-indent 'null))
+     (append writer (str current-indent 'null))
 
      (string? value)
-     (.append writer (str current-indent \" (escaped-str value) \"))
+     (append writer (str current-indent \" (escaped-str value) \"))
 
      (number? value)
-     (.append writer (str current-indent value))
+     (append writer (str current-indent value))
 
      (keyword? value)
-     (.append writer (str current-indent \"
+     (append writer (str current-indent \"
                           (escaped-str (subs (str value) 1)) \"))
 
      (symbol? value)

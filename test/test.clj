@@ -57,7 +57,9 @@
          (json/encode-to-str {1 1}))))
 
 (deftest single-object-bignum-key
-  (is (= "{\"1.0E25\":1}"
+  ;; Should be 1.0E25 but those idiots at microsoft don't think they
+  ;; need to adhere to mere IEEE standards.
+  (is (= "{\"1E+25\":1}"
          (json/encode-to-str {1e25 1}))))
 
 (deftest easy-number
@@ -101,7 +103,7 @@
   (is (:json= {:a "a" :b "b"}))
   ;; default set behaviour:
   (is (= ["a" "b"]
-           (json/decode (json/encode #{"a" "b"}))))
+           (vec (sort (json/decode (json/encode #{"a" "b"}))))))
   ;; constant-time-lookup-preserving behaviour:
   (is (= {:a :a :b :b})
       (binding [org.danlarkin.json.encoder/*sets-as-maps* true]
@@ -150,8 +152,17 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; from http://www.json.org/JSON_checker/test/pass1.json
 (deftest pass1
-  (let [string (slurp "test/pass1.json")
-        decoded-json (json/decode-from-str string)
-        encoded-json (json/encode-to-str decoded-json)
-        re-decoded-json (json/decode-from-str encoded-json)]
-    (is (= decoded-json re-decoded-json))))
+  (testing "file with unicode"
+    (let [string (slurp "../test/pass1.json")
+          decoded-json (json/decode-from-str string)
+          encoded-json (json/encode-to-str decoded-json)
+          re-decoded-json (json/decode-from-str encoded-json)]
+      (is (= decoded-json re-decoded-json))))
+  (testing "file with no unicode"
+    (let [string (slurp "../test/no_unicode.json")
+          decoded-json (json/decode-from-str string)
+          encoded-json (json/encode-to-str decoded-json)
+          re-decoded-json (json/decode-from-str encoded-json)]
+      (is (= decoded-json re-decoded-json)))))
+
+(run-tests)

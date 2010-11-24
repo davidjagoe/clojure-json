@@ -1,3 +1,15 @@
+# NOTE #
+
+Status: alpha.
+
+This fork is an attempt to support the CLR platform. Currently unicode
+is known not to work because unlike the Java BufferedReader which
+correctly supports the concept of characters, I am using the .net
+BufferedStream which provides no native support for characters beyonds
+those that fit into bytes. Yay. Once I figure out a way around that, I
+will also have to remove the (MemoryStream. (char-array string)) code
+which suffers from the same problem.
+
 # Installing #
 
 clojure-json is on [clojars](http://clojars.org)! [http://clojars.org/org.danlarkin/clojure-json](http://clojars.org/org.danlarkin/clojure-json)

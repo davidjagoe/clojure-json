@@ -24,14 +24,27 @@
 ;; THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 (ns org.danlarkin.json.decoder
-  (:import (java.io BufferedReader)))
+  (:import (System.IO BufferedStream SeekOrigin)))
+
+(defprotocol MarkResetProtocol
+  "support mark and reset on a seekable stream"
+  (mark [this read-ahead-limit] "Mark the present position in the stream")
+  (reset [this] "Reset the stream to the current mark"))
+
+;; Temporary proof-of-concept, should be state on the BufferedStream
+(def the-mark (atom 0))
+
+(extend-type BufferedStream
+  MarkResetProtocol
+  (mark [this _] (swap! the-mark (fn [& args] (.Position this))))
+  (reset [this]  (.Seek this @the-mark (SeekOrigin.))))
 
 (declare decode-value)
 
 (defn- json-ws?
   "Returns true if the Unicode codepoint is an 'insignificant whitespace' per
    the JSON standard, false otherwise.  Cf. RFC 4627, sec. 2)"
-  [#^Integer codepoint]
+  [#^Int32 codepoint]
   (cond
    (= codepoint 0x20) true ; Space
    (= codepoint 0x09) true ; Horizontal tab
@@ -42,7 +55,7 @@
 (defn- number-char?
   "Returns true if the Unicode codepoint is allowed in a number.
   Cf. RFC 4627, sec. 2.4)"
-  [#^Integer codepoint]
+  [#^Int32 codepoint]
   (cond
    (and (>= codepoint 0x30) (<= codepoint 0x39)) true ; 0-9
    (= codepoint 0x2e) true ; .
@@ -54,36 +67,36 @@
 (defn- read-matching
   "Reads and returns a string containing 0 or more characters matching match-fn
    from a BufferedReader."
-  [#^BufferedReader b-reader match-fn]
+  [#^BufferedStream b-reader match-fn]
   (loop [s ""]
-    (let [_ (.mark b-reader 1)
-          codepoint (.read b-reader)]
+    (let [_ (mark b-reader 1)
+          codepoint (.ReadByte b-reader)]
       (cond
        (= codepoint -1) s
        (match-fn codepoint) (recur (str s (char codepoint)))
-       :else (let [_ (.reset b-reader)] s)))))
+       :else (let [_ (reset b-reader)] s)))))
 
 (defn- eat-whitespace
   "Reads 0 or more whitespace characters from a BufferedReader.
    Returns the whitespace eaten, not that anyone cares."
-  [#^BufferedReader b-reader]
+  [#^BufferedStream b-reader]
   (read-matching b-reader json-ws?))
 
 (defn- decode-object
   "Decodes a JSON object and returns a hash-map."
-  [#^BufferedReader b-reader]
+  [#^BufferedStream b-reader]
   (loop [object {}]
-    (let [_ (.mark b-reader 1)
-          codepoint (.read b-reader)]
+    (let [_ (mark b-reader 1)
+          codepoint (.ReadByte b-reader)]
       (cond
        (= codepoint 0x7D) object ; }
        (= codepoint 0x2C) (recur object)
        (json-ws? codepoint) (let [_ (eat-whitespace b-reader)] (recur object))
-       :else (let [_ (.reset b-reader)
+       :else (let [_ (reset b-reader)
                    _ (eat-whitespace b-reader)
                    key (decode-value b-reader)
                    _ (eat-whitespace b-reader)
-                   name-sep (.read b-reader) ; should be : (0x3A)
+                   name-sep (.ReadByte b-reader) ; should be : (0x3A)
                    _ (eat-whitespace b-reader)
                    value (decode-value b-reader)
                    _ (eat-whitespace b-reader)]
@@ -94,16 +107,16 @@
 
 (defn- decode-array
   "Decodes a JSON array and returns a vector."
-  [#^BufferedReader b-reader]
+  [#^BufferedStream b-reader]
   (loop [array []]
-    (let [_ (.mark b-reader 1)
-          codepoint (.read b-reader)]
+    (let [_ (mark b-reader 1)
+          codepoint (.ReadByte b-reader)]
       (cond
        (= codepoint 0x5D) array
        (= codepoint 0x2C) (recur array)
        ;; next case handles empty array with whitespace between [ and ]
        (json-ws? codepoint) (let [_ (eat-whitespace b-reader)] (recur array))
-       :else (let [_ (.reset b-reader)
+       :else (let [_ (reset b-reader)
                    _ (eat-whitespace b-reader)
                    value (decode-value b-reader)
                    _ (eat-whitespace b-reader)]
@@ -123,8 +136,8 @@
 (defn- unescape
   "We've read a backslash, now figure out what character it was escaping
    and return it."
-  [#^BufferedReader b-reader]
-  (let [codepoint (.read b-reader)
+  [#^BufferedStream b-reader]
+  (let [codepoint (.ReadByte b-reader)
         map-value (unescape-map codepoint)]
     (cond
      map-value map-value
@@ -132,15 +145,15 @@
      (read-string (str
                    "\\u"
                    (apply str (take 4 (map
-                                       #(char (.read #^BufferedReader %))
+                                       #(char (.ReadByte #^BufferedStream %))
                                        (repeat b-reader)))))))))
 
 (defn- decode-string
   "Decodes a JSON string and returns it.  NOTE: strings are terminated by a
    double-quote so we won't have to worry about back-tracking."
-  [#^BufferedReader b-reader]
+  [#^BufferedStream b-reader]
   (loop [s ""]
-    (let [codepoint (.read b-reader)]
+    (let [codepoint (.ReadByte b-reader)]
       (cond
        (= codepoint -1) (throw (Exception. "Hit end of input inside a string!"))
        (= codepoint 0x22) s ; done (and we ate the close double-quote already)
@@ -152,11 +165,11 @@
   "Decodes an expected constant, throwing an exception if the buffer contents
    don't match the expectation. Otherwise, the supplied constant value is
    returned."
-  [#^BufferedReader b-reader #^String expected value]
+  [#^BufferedStream b-reader #^String expected value]
   (let [exp-len (count expected)
         got (loop [s "" br b-reader len exp-len]
               (if (> len 0)
-                (recur (str s (char (.read br))) br (dec len))
+                (recur (str s (char (.ReadByte br))) br (dec len))
                 s))]
     (if (= got expected)
       value
@@ -167,30 +180,32 @@
 (defn- decode-number
   "Decodes a number and returns it.  NOTE: first character of the number has
    already read so the first thing we need to do is reset the BufferedReader."
-  [#^BufferedReader b-reader]
-  (let [_ (.reset b-reader)
+  [#^BufferedStream b-reader]
+  (let [_ (reset b-reader)
         number-str (read-matching b-reader number-char?)]
     (read-string number-str)))
 
 (defn- decode-value
   "Decodes & returns a value (string, number, boolean, null, object, or array).
    NOTE: decode-value is not responsible for eating whitespace after the value."
-  [#^BufferedReader b-reader]
-  (let [_ (.mark b-reader 1)
-        int-char (.read b-reader)
+  [#^BufferedStream b-reader]
+  (let [_ (mark b-reader 1)
+        int-char (.ReadByte b-reader)
         char (and (not= -1 int-char) (char int-char))]
     (cond
      (= char \{) (decode-object b-reader)
      (= char \[) (decode-array b-reader)
      (= char \") (decode-string b-reader)
      (= char \f) (decode-const b-reader "alse" false)
+     (= char \F) (decode-const b-reader "alse" false)
      (= char \t) (decode-const b-reader "rue" true)
+     (= char \T) (decode-const b-reader "rue" true)
      (= char \n) (decode-const b-reader "ull" nil)
      :else (if (= -1 int-char)
              ""
              (decode-number b-reader)))))
 
 (defn decode-from-buffered-reader
-  [#^BufferedReader reader]
-  (eat-whitespace reader) ; eat leading whitespace; next char should
-  (decode-value reader))  ; be start of a value (what we'll return)
+  [#^BufferedStream reader]
+  (eat-whitespace reader)   ; eat leading whitespace; next char should
+  (decode-value reader))    ; be start of a value (what we'll return)
